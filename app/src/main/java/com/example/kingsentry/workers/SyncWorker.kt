@@ -22,6 +22,7 @@ import com.example.kingsentry.data.remote.IdMap
 import com.example.kingsentry.data.remote.OrchardDto
 import com.example.kingsentry.data.remote.ScanResultDto
 import com.example.kingsentry.data.remote.SupabaseClientModule
+import com.example.kingsentry.data.repository.MasterDataSyncRepository
 import io.github.jan.supabase.auth.auth
 import io.github.jan.supabase.postgrest.from
 import io.github.jan.supabase.postgrest.query.Columns
@@ -68,6 +69,13 @@ class SyncWorker(
             }
             Log.d(TAG, "Found ${unsyncedScans.size} unsynced scan(s).")
 
+            // Debug Log: Print Room scan details
+            val localDiseasesMap = dao.getAllDiseasesList().associateBy { it.id }
+            for (scan in unsyncedScans) {
+                val diseaseName = localDiseasesMap[scan.diseaseIdFk]?.diseaseName ?: "Unknown"
+                Log.d(TAG, "Room Scan Detail -> id: ${scan.id}, disease_id_fk: ${scan.diseaseIdFk} ($diseaseName), confidence_score: ${scan.confidenceScore}, is_synced: ${scan.isSynced}")
+            }
+
             // 3. Process Orchards referenced by unsynced scans
             val localOrchards = dao.getAllOrchardsList()
             val referencedOrchardIds = unsyncedScans.map { it.orchardIdFk }.toSet()
@@ -97,20 +105,27 @@ class SyncWorker(
             val orchardMap: Map<Int, String> = fetchedOrchards.associate { it.sourceLocalId to it.id }
             Log.d(TAG, "orchardMap size = ${orchardMap.size}")
 
-            // 4. Fetch Disease Dictionary mappings
-            val diseaseRows = supabaseClient.from("disease_dictionary")
-                .select(Columns.list("id", "source_local_id"))
-                .decodeList<IdMap>()
-            val diseaseMap: Map<Int, String> = diseaseRows.associate { it.sourceLocalId to it.id }
+            // 4. Synchronize Master Reference Data and fetch Disease Dictionary UUID mappings
+            val masterDataRepo = MasterDataSyncRepository(dao, supabaseClient)
+            val masterResult = try {
+                masterDataRepo.syncMasterDataAndGetDiseaseMap()
+            } catch (e: Exception) {
+                Log.e(TAG, "Master reference data sync failed: ${e.message}", e)
+                com.example.kingsentry.data.sync.SyncStatusManager.reportWorkerFailure("Master data sync failed: ${e.message}")
+                return Result.retry()
+            }
+            val diseaseMap = masterResult.diseaseMap
             Log.d(TAG, "diseaseMap size = ${diseaseMap.size}")
 
             // 5. Build draft ScanResultDto payloads
             val validUploads = mutableListOf<Pair<ScanResultData, ScanResultDto>>()
+            var skippedScanCount = 0
 
             for (scan in unsyncedScans) {
                 val diseaseUuid = diseaseMap[scan.diseaseIdFk]
                 if (diseaseUuid == null) {
                     Log.w(TAG, "Skipped scan local_id=${scan.id}: disease_id_fk=${scan.diseaseIdFk} not found in Supabase disease_dictionary.")
+                    skippedScanCount++
                     continue
                 }
 
@@ -130,9 +145,11 @@ class SyncWorker(
                 validUploads.add(scan to dto)
             }
 
-            if (validUploads.isEmpty()) {
-                Log.w(TAG, "No valid scan results ready for upload after disease UUID validation.")
-                return Result.success()
+            if (skippedScanCount > 0 || (unsyncedScans.isNotEmpty() && validUploads.isEmpty())) {
+                val msg = "Sync postponed: $skippedScanCount scan(s) skipped due to unmapped disease UUIDs"
+                Log.e(TAG, msg)
+                com.example.kingsentry.data.sync.SyncStatusManager.reportWorkerFailure(msg)
+                return Result.retry()
             }
 
             Log.d(TAG, "Prepared ${validUploads.size} valid scan(s) for image upload & row upsert.")
@@ -205,6 +222,7 @@ class SyncWorker(
             }
 
             com.example.kingsentry.data.sync.SyncStatusManager.reportWorkerSuccess()
+            Log.d(TAG, "master: ${masterResult.diseaseCount} diseases, ${masterResult.treatmentCount} treatments upserted | scans: $totalSynced uploaded, $skippedScanCount skipped")
             Log.d(TAG, "SyncWorker finished successfully. Total synced: $totalSynced.")
             Result.success()
         } catch (e: HttpRequestTimeoutException) {

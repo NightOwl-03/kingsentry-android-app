@@ -62,3 +62,54 @@ data class IdMap(
     @SerialName("source_local_id")
     val sourceLocalId: Int,
 )
+
+/**
+ * Data Transfer Object representing a record in Supabase `disease_dictionary` table.
+ */
+@Serializable
+data class DiseaseDictionaryDto(
+    @SerialName("source_local_id")
+    val sourceLocalId: Int,
+
+    @SerialName("disease_name")
+    val diseaseName: String,
+
+    @SerialName("description")
+    val description: String,
+
+    @SerialName("symptoms")
+    val symptoms: String,
+
+    @SerialName("possible_causes")
+    val possibleCauses: String = "",
+
+    @SerialName("prevention_tips")
+    val preventionTips: String = "",
+
+    @SerialName("reference_name")
+    val referenceName: String,
+
+    @SerialName("reference_url")
+    val referenceUrl: String,
+)
+
+/**
+ * Data Transfer Object representing a record in Supabase `treatment_recommendations` table.
+ */
+@Serializable
+data class TreatmentRecommendationDto(
+    @SerialName("source_local_id")
+    val sourceLocalId: Int,
+
+    @SerialName("disease_id")
+    val diseaseId: String,
+
+    @SerialName("treatment_action")
+    val treatmentAction: String,
+
+    @SerialName("expert_reference_name")
+    val expertReferenceName: String,
+
+    @SerialName("article_source_url")
+    val articleSourceUrl: String,
+)

@@ -77,6 +77,12 @@ interface KingSentryDao {
     @Query("SELECT * FROM DiseaseDictionary ORDER BY disease_name ASC")
     fun getAllDiseases(): Flow<List<DiseaseDictionary>>
 
+    @Query("SELECT * FROM DiseaseDictionary ORDER BY disease_name ASC")
+    suspend fun getAllDiseasesList(): List<DiseaseDictionary>
+
+    @Query("SELECT * FROM TreatmentRecommendations")
+    suspend fun getAllTreatmentsList(): List<TreatmentRecommendation>
+
     @Transaction
     @Query("SELECT * FROM DiseaseDictionary WHERE disease_name LIKE '%' || :name || '%' LIMIT 1")
     suspend fun getFullDiseaseDetailByName(name: String): FullDiseaseDetail?
